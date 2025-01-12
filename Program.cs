@@ -72,46 +72,48 @@ namespace GeneratorProcessingApp
                     }))
                 .ToList();
 
-            // Perform calculations based on input and reference data
-            var results = generators.Select(generator =>
-            {
-                // Get ValueFactor based on generator type (Wind, Gas, Coal)
-                decimal valueFactor = GetValueFactor(referenceData, generator.Name);
-                decimal emissionFactor = generator.EmissionRating.HasValue ? GetEmissionFactor(referenceData, generator.Name) : 0;
+            // Calculate Totals
+            var totals = generators
+                .GroupBy(g => g.Name)
+                .Select(g => new XElement("Generator",
+                    new XElement("Name", g.Key),
+                    new XElement("Total", g.Sum(x => x.Energy * x.Price * GetValueFactor(referenceData, g.Key)))
+                ))
+                .ToList();
 
-                // Calculate Daily Generation Value: Energy * Price * ValueFactor
-                decimal dailyGenerationValue = generator.Energy * generator.Price * valueFactor;
+            // Calculate Max Emission Generators
+            var maxEmissionGenerators = generators
+                .Where(g => g.EmissionRating.HasValue)
+                .GroupBy(g => g.Date)
+                .Select(dayGroup => dayGroup.OrderByDescending(g =>
+                    g.Energy * g.EmissionRating.Value * GetEmissionFactor(referenceData, g.Name)).First())
+                .Select(maxGen => new XElement("Day",
+                    new XElement("Name", maxGen.Name),
+                    new XElement("Date", maxGen.Date.ToString("yyyy-MM-ddTHH:mm:sszzz")),
+                    new XElement("Emission", maxGen.Energy * maxGen.EmissionRating.Value * GetEmissionFactor(referenceData, maxGen.Name))
+                ))
+                .ToList();
 
-                // Calculate Daily Emissions: Energy * EmissionRating * EmissionFactor (Only for gas and coal)
-                decimal dailyEmissions = 0;
-                if (generator.EmissionRating.HasValue)
-                {
-                    dailyEmissions = generator.Energy * generator.EmissionRating.Value * emissionFactor;
-                }
-
-                // Calculate Actual Heat Rate (for coal generators)
-                decimal actualHeatRate = 0;
-                if (generator.Type == "CoalGenerator" && generator.TotalHeatInput.HasValue && generator.ActualNetGeneration.HasValue)
-                {
-                    actualHeatRate = generator.TotalHeatInput.Value / generator.ActualNetGeneration.Value;
-                }
-
-                // Return the result as an XElement
-                return new XElement("GeneratorResult",
-                    new XElement("Name", generator.Name),
-                    new XElement("Type", generator.Type),
-                    new XElement("Date", generator.Date.ToString("yyyy-MM-dd")),
-                    new XElement("DailyGenerationValue", dailyGenerationValue),
-                    new XElement("DailyEmissions", dailyEmissions),
-                    new XElement("ActualHeatRate", actualHeatRate)
-                );
-            }).ToList();
+            // Calculate Actual Heat Rates
+            var actualHeatRates = generators
+                .Where(g => g.Type == "CoalGenerator" && g.TotalHeatInput.HasValue && g.ActualNetGeneration.HasValue)
+                .GroupBy(g => g.Name)
+                .Select(g => new XElement("ActualHeatRate",
+                    new XElement("Name", g.Key),
+                    new XElement("HeatRate", g.First().TotalHeatInput.Value / g.First().ActualNetGeneration.Value)
+                ))
+                .ToList();
 
             // Generate the final output XML document
             return new XDocument(
-                new XElement("GenerationResults", results)
+                new XElement("GenerationOutput",
+                    new XElement("Totals", totals),
+                    new XElement("MaxEmissionGenerators", maxEmissionGenerators),
+                    new XElement("ActualHeatRates", actualHeatRates)
+                )
             );
         }
+
 
 
         static object GetReferenceData()
